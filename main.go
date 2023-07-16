@@ -19,6 +19,8 @@ import (
 // determines if the app runs as server or client
 var (
 	server = flag.Bool("server", false, "run as server")
+	port   = flag.String("port", "8080", "port to run on")
+	url    = flag.String("url", "http://localhost:8080/", "url to send cpu values to")
 )
 
 // Application struct holds all the data and methods for the app
@@ -59,7 +61,7 @@ func main() {
 	// init the app
 	app := Application{
 		Name:      "FoxyBoxy",
-		Url:       "http://drfright:8080/",
+		Url:       *url,
 		Interface: client,
 		Aggs:      []Aggregation{},
 		Data:      []performance.CpuUsage{},
@@ -105,7 +107,7 @@ func main() {
 				app.SetLineChart()
 			}
 		}()
-		http.ListenAndServe(":8080", nil)
+		http.ListenAndServe(fmt.Sprintf(":%v", *port), nil)
 	}
 
 }
@@ -175,7 +177,6 @@ func (app *Application) AppendLineChart() {
 	}
 	app.ChartData = append(app.ChartData, opts.LineData{Value: tmp / float64(len(app.Aggs))})
 	app.Config.Times = append(app.Config.Times, time.Now())
-	fmt.Println("appending", time.Now())
 	app.Aggs = nil
 }
 
