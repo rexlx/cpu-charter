@@ -21,12 +21,14 @@ var (
 	server = flag.Bool("server", false, "run as server")
 	port   = flag.String("port", "8080", "port to run on")
 	url    = flag.String("url", "http://localhost:8080/", "url to send cpu values to")
+	name   = flag.String("name", "FoxyBoxy", "name of the app")
 )
 
 // Application struct holds all the data and methods for the app
 type Application struct {
 	Name      string
 	Url       string
+	Stats     *Stats
 	Chart     *charts.Line
 	Config    *ChartConfig
 	ChartData []opts.LineData
@@ -50,34 +52,24 @@ type Aggregation struct {
 	Name  string
 }
 
+type Stats struct {
+	TXCount     int `json:"send_count"`
+	RXCount     int `json:"receive_count"`
+	ServerTicks int `json:"server_ticks"`
+	ClientTicks int `json:"client_ticks"`
+}
+
 func main() {
 	flag.Parse()
 
-	// for the API
-	client := &http.Client{}
-	// for the chart
-	items := make([]opts.LineData, 0)
-
 	// init the app
-	app := Application{
-		Name:      "FoxyBoxy",
-		Url:       *url,
-		Interface: client,
-		Aggs:      []Aggregation{},
-		Data:      []performance.CpuUsage{},
-		Mu:        sync.Mutex{},
-		ChartData: items,
-		Chart:     charts.NewLine(),
-		Config: &ChartConfig{
-			Start: time.Now(),
-			Times: []time.Time{},
-		},
-	}
+	app := NewApplication(*name, *url)
 
 	// if running in client mode
 	if !*server {
 
 		for range time.Tick(6 * time.Second) {
+			app.Stats.ClientTicks++
 			// create the channel for the cpu values
 			stream := make(chan []*performance.CpuUsage)
 			// get the cpu values
@@ -90,21 +82,24 @@ func main() {
 			}
 			// send the good news
 			app.SendCpuValuesOverHTTP(out)
+			// fmt.Printf("sent %v messages, ticked %v times\n", app.Stats.TXCount, app.Stats.ClientTicks)
 
 		}
 
 	} else {
 		// we are the server
-		fmt.Println("receive cpu values over http")
+		fmt.Println("listening on port", *port, "...")
 		// setup our handlers
 		http.HandleFunc("/", app.ReceiveCpuValuesOverHTTP)
 		http.HandleFunc("/chart", app.ShowLineChart)
 
 		// set up our tasks in the background
 		go func() {
-			for range time.Tick(30 * time.Second) {
+			for range time.Tick(360 * time.Second) {
+				app.Stats.ServerTicks++
 				app.AppendLineChart()
 				app.SetLineChart()
+				// fmt.Printf("received %v messages, ticked %v times\n", app.Stats.RXCount, app.Stats.ServerTicks)
 			}
 		}()
 		http.ListenAndServe(fmt.Sprintf(":%v", *port), nil)
@@ -126,8 +121,11 @@ func (app *Application) SendCpuValuesOverHTTP(vals []byte) {
 		panic(err)
 	}
 
-	fmt.Println(resp.Status)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println(resp.Status)
+	}
 	defer resp.Body.Close()
+	app.Stats.TXCount++
 
 }
 
@@ -148,6 +146,7 @@ func (app *Application) ReceiveCpuValuesOverHTTP(w http.ResponseWriter, r *http.
 		fmt.Println(err, "continuing")
 		return
 	}
+	app.Stats.RXCount++
 
 	app.Data = append(app.Data, msg...)
 
@@ -185,7 +184,7 @@ func (app *Application) SetLineChart() {
 	app.Mu.Lock()
 	defer app.Mu.Unlock()
 	app.Chart.SetGlobalOptions(
-		charts.WithInitializationOpts(opts.Initialization{Theme: types.ThemeShine}),
+		charts.WithInitializationOpts(opts.Initialization{Theme: types.ThemeEssos}),
 		charts.WithTitleOpts(opts.Title{
 			Title:    app.Name,
 			Subtitle: "CPU Usage",
@@ -193,4 +192,26 @@ func (app *Application) SetLineChart() {
 	app.Chart.SetXAxis(app.Config.Times).
 		AddSeries("CPU Usage", app.ChartData).
 		SetSeriesOptions(charts.WithLineChartOpts(opts.LineChart{Smooth: true}))
+}
+
+func NewApplication(name, url string) *Application {
+	// for the API
+	client := &http.Client{}
+	// for the chart
+	items := make([]opts.LineData, 0)
+	return &Application{
+		Name:      name,
+		Url:       url,
+		Interface: client,
+		Stats:     &Stats{},
+		Aggs:      []Aggregation{},
+		Data:      []performance.CpuUsage{},
+		Mu:        sync.Mutex{},
+		ChartData: items,
+		Chart:     charts.NewLine(),
+		Config: &ChartConfig{
+			Start: time.Now(),
+			Times: []time.Time{},
+		},
+	}
 }
